@@ -7,6 +7,8 @@ from scipy import linalg
 from math import sqrt,exp,log,cos,pi
 from scipy.linalg import matmul_toeplitz
 
+import datetime
+
 
 
 class SolarSite(object):
@@ -49,11 +51,15 @@ class SolarSite(object):
         mailing_list = 'false'
         
         # Declare url string
-        url = 'https://developer.nrel.gov/api/solar/nsrdb_psm3_download.csv?wkt=POINT({lon}%20{lat})&names={year}&leap_day={leap}&interval={interval}&utc={utc}&full_name={name}&email={email}&affiliation={affiliation}&mailing_list={mailing_list}&reason={reason}&api_key={api}&attributes={attr}'\
+        # Adapted (Johann Kraft 2023-08-28) -> changed to use METEOSAT IODC dataset for Africa coverage
+        # https://developer.nrel.gov/docs/solar/nsrdb/meteosat-download/
+        #url = 'https://developer.nrel.gov/api/solar/nsrdb_psm3_download.csv?wkt=POINT({lon}%20{lat})&names={year}&leap_day={leap}&interval={interval}&utc={utc}&full_name={name}&email={email}&affiliation={affiliation}&mailing_list={mailing_list}&reason={reason}&api_key={api}&attributes={attr}' \
+        url = 'https://developer.nrel.gov/api/nsrdb/v2/solar/msg-iodc-download.csv?wkt=POINT({lon}%20{lat})&names={year}&leap_day={leap}&interval={interval}&utc={utc}&full_name={name}&email={email}&affiliation={affiliation}&mailing_list={mailing_list}&reason={reason}&api_key={api}&attributes={attr}' \
         .format(year=year, lat=self.lat, lon=self.lon, leap=str(leap_year).lower(), interval=interval,\
                 utc=str(utc).lower(), name=your_name, email=your_email, mailing_list=mailing_list, \
                 affiliation=your_affiliation, reason=reason_for_use, api=api_key, attr=attributes)
-        
+
+
         # Return just the first 2 lines to get metadata:
         r=requests.get(url)
         if r.status_code==400:
@@ -63,10 +69,10 @@ class SolarSite(object):
         idx = pd.date_range(start='1/1/{yr}'.format(yr=year), freq=interval+'Min', end='12/31/{yr} 23:59:00'.format(yr=year))
         if leap_year==False:
             idx = idx[(idx.day != 29) | (idx.month != 2)]
-        df=df.set_index(idx)
+        df = df.set_index(idx)
 
         self.resource_data = df
-        self.meta_resource_data = meta.T.to_dict('r')[0]
+        self.meta_resource_data = meta.T.to_dict(orient='records')[0]
         
         return df
     
@@ -181,20 +187,28 @@ class SolarSite(object):
             Date in YYYY-MM-DD format. For example "2015-07-14"
             
         """
-        date_index2 = pd.date_range(start='2015-01-10', end = '2015-01-10' + ' 23:59:59', freq='1S')
-        ts = self.solar_power_from_nsrdb[date].resample("1S").interpolate(method="linear")
-        ts = ts.reindex(date_index2).fillna(0)
+        # Adapted (Johann Kraft 2023-08-28)
+        # Accept any date withing the solar power timeseries
+        ts_index = pd.date_range(start=date,
+                                 end=date + ' 23:59:59',
+                                 freq='1S')
+
+        ts = self.solar_power_from_nsrdb[date]
+
+        ts = ts.resample("1S").interpolate(method="linear")
+
+        ts = ts.reindex(ts_index).fillna(0)
 
         ts *= (7.5/self.capacity)
 
         ct = self.cloud_type[date].resample("1S").pad()
-        ct = ct.reindex(date_index2).fillna(0)
+        #ct = ct.reindex(date_index2).fillna(0)
         ct = ct.astype(int)
 
 
         σ = 0.0003447
 
-        λm = np.array([999999999, 999999999  , 3.2889645, 3.9044665, 3.2509495, 0, 4.1906035, 3.097432 , 4.088177,3.9044665,999999999,3.2889645,3.2889645])
+        λm = np.array([999999999, 999999999, 3.2889645, 3.9044665, 3.2509495, 0, 4.1906035, 3.097432 , 4.088177,3.9044665,999999999,3.2889645,3.2889645])
         λw = np.array([5.977229, 5.804869, 6.503102, 6.068099, 5.879129, 0, 4.834679, 5.153073, 6.661633,6.068099,5.977229,6.503102,6.503102])
 
         pm = np.array([0.001250, 0.002803, 0.009683, 0.005502, 0.018888, 0, 0.000432, 0.007383, 0.003600,0.005502,0.001250,0.009683,0.009683])
